@@ -98,12 +98,40 @@ export default function DCTModule() {
     }
   }
 
+  const handleReset = () => {
+    setImage(null)
+    setWatermark("")
+    setWatermarkedImage(null)
+    setStrength(0.5)
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ""
+    }
+  }
+
+  const handleDownload = () => {
+    if (watermarkedImage) {
+      const link = document.createElement("a")
+      link.href = watermarkedImage
+      link.download = "watermarked-image.png"
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>DCT (Discrete Cosine Transform) Watermarking</CardTitle>
-          <CardDescription>Modifiez les coefficients DCT pour un watermark plus robuste</CardDescription>
+          <div className="flex justify-between items-center">
+            <div>
+              <CardTitle>DCT (Discrete Cosine Transform) Watermarking</CardTitle>
+              <CardDescription>Modifiez les coefficients DCT pour un watermark plus robuste</CardDescription>
+            </div>
+            <Button variant="outline" onClick={handleReset} size="sm">
+              Recommencer
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="theory" className="w-full">
@@ -178,12 +206,17 @@ export default function DCTModule() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {watermarkedImage && (
-                      <>
+                      <div className="space-y-2">
                         <ImagePreview src={watermarkedImage || "/placeholder.svg"} alt="Image watermarkée" />
-                        <Button onClick={handleExtractWatermark} variant="outline" className="w-full bg-transparent">
-                          Extraire Watermark
-                        </Button>
-                      </>
+                        <div className="flex gap-2">
+                          <Button onClick={handleExtractWatermark} variant="outline" className="flex-1 bg-transparent">
+                            Extraire
+                          </Button>
+                          <Button onClick={handleDownload} className="flex-1">
+                            Télécharger
+                          </Button>
+                        </div>
+                      </div>
                     )}
                     {!watermarkedImage && (
                       <p className="text-center text-muted-foreground text-sm py-8">
