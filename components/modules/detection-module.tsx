@@ -52,12 +52,14 @@ export default function DetectionModule() {
         setResults((prev) => [
           ...prev,
           {
-            watermarkDetected: data.detected,
-            confidence: data.confidence,
-            watermarkText: data.watermark,
+            watermarkDetected: data.detected || false,
+            confidence: data.analysis?.confidence || 0,
+            watermarkText: data.analysis?.hasWatermark ? "Watermark LSB détecté" : undefined,
             method: "LSB",
           },
         ])
+      } else {
+        alert(data.error || "Erreur lors de la détection LSB")
       }
     } catch (error) {
       console.error("Erreur:", error)
@@ -88,12 +90,14 @@ export default function DetectionModule() {
         setResults((prev) => [
           ...prev,
           {
-            watermarkDetected: data.detected,
-            confidence: data.confidence,
+            watermarkDetected: data.detected || false,
+            confidence: data.confidence || 0,
             watermarkText: data.watermark,
             method: "DCT",
           },
         ])
+      } else {
+        alert(data.error || "Erreur lors de la détection DCT")
       }
     } catch (error) {
       console.error("Erreur:", error)

@@ -7,194 +7,528 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import ImagePreview from "@/components/image-preview"
-import LSBControls from "@/components/controls/lsb-controls"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { X, Upload, ArrowRight, Activity, Eye, FileDiff } from "lucide-react"
+
+// Types
+interface ComparisonMetrics {
+  psnr: number
+  mse: number
+  pixelsModified: number
+}
+
+interface WatermarkItem {
+  id: number
+  text: string
+}
+
+interface ExtractionResult {
+  originalImage: string
+  watermarkText: string
+}
 
 export default function LSBModule() {
+  // State
   const [image, setImage] = useState<string | null>(null)
-  const [watermark, setWatermark] = useState<string>("")
+  const [watermarks, setWatermarks] = useState<WatermarkItem[]>([{ id: 1, text: "" }])
   const [watermarkedImage, setWatermarkedImage] = useState<string | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [lsbBits, setLsbBits] = useState(1)
+  const [currentMetrics, setCurrentMetrics] = useState<{ psnr?: number; mse?: number } | null>(null)
+
+  // Extraction State
+  const [extractionImage, setExtractionImage] = useState<string | null>(null)
+  const [extractionResult, setExtractionResult] = useState<ExtractionResult | null>(null)
+
+  // Comparison State
+  const [originalImage, setOriginalImage] = useState<string | null>(null)
+  const [watermarkedImage1, setWatermarkedImage1] = useState<string | null>(null)
+  const [watermarkedImage2, setWatermarkedImage2] = useState<string | null>(null)
+  const [comparisonMetrics1, setComparisonMetrics1] = useState<ComparisonMetrics | null>(null)
+  const [comparisonMetrics2, setComparisonMetrics2] = useState<ComparisonMetrics | null>(null)
+
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Helpers
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, setter: (val: string | null) => void) => {
     const file = e.target.files?.[0]
     if (file) {
       const reader = new FileReader()
-      reader.onload = (event) => {
-        setImage(event.target?.result as string)
-        setWatermarkedImage(null)
-      }
+      reader.onload = (event) => setter(event.target?.result as string)
       reader.readAsDataURL(file)
     }
   }
 
+  // Actions
   const handleAddWatermark = async () => {
-    if (!image || !watermark) {
-      alert("Veuillez télécharger une image et entrer un texte de watermark")
-      return
-    }
+    if (!image) return alert("Image requise")
+    const activeWatermarks = watermarks.filter(w => w.text.trim() !== "")
+    if (activeWatermarks.length === 0) return alert("Texte requis")
 
     setIsProcessing(true)
     try {
-      const formData = new FormData()
-      const canvas = document.createElement("canvas")
-      const img = new Image()
-      img.onload = async () => {
-        canvas.width = img.width
-        canvas.height = img.height
-        const ctx = canvas.getContext("2d")
-        ctx?.drawImage(img, 0, 0)
-
-        formData.append("imageData", canvas.toDataURL("image/png"))
-        formData.append("watermark", watermark)
-        formData.append("lsbBits", lsbBits.toString())
-
-        const response = await fetch("/api/watermark/lsb/add", {
-          method: "POST",
-          body: formData,
-        })
-
-        const data = await response.json()
-        if (data.success) {
-          setWatermarkedImage(data.watermarkedImage)
-        }
-      }
-      img.src = image
-    } catch (error) {
-      console.error("Erreur:", error)
-      alert("Erreur lors du watermarking")
-    } finally {
-      setIsProcessing(false)
-    }
-  }
-
-  const handleExtractWatermark = async () => {
-    if (!watermarkedImage) {
-      alert("Aucune image watermarkée trouvée")
-      return
-    }
-
-    setIsProcessing(true)
-    try {
-      const formData = new FormData()
-      formData.append("imageData", watermarkedImage)
+      const formData = await createFormDataFromImage(image)
+      formData.append("watermark", activeWatermarks.map(w => w.text).join(" | "))
       formData.append("lsbBits", lsbBits.toString())
 
-      const response = await fetch("/api/watermark/lsb/extract", {
-        method: "POST",
-        body: formData,
-      })
+      const res = await fetch("/api/watermark/lsb/add", { method: "POST", body: formData })
+      const data = await res.json()
 
-      const data = await response.json()
       if (data.success) {
-        alert(`Watermark extrait: ${data.watermark}`)
+        setWatermarkedImage(data.watermarkedImage)
+        setCurrentMetrics(data.metrics)
+      } else {
+        alert(data.error || "Erreur")
       }
-    } catch (error) {
-      console.error("Erreur:", error)
-      alert("Erreur lors de l'extraction")
-    } finally {
-      setIsProcessing(false)
+    } catch (e) { console.error(e); alert("Erreur inattendue") }
+    finally { setIsProcessing(false) }
+  }
+
+  const handleExtract = async () => {
+    if (!extractionImage) return alert("Image requise")
+    setIsProcessing(true)
+    try {
+      const formData = await createFormDataFromImage(extractionImage)
+      // Plus besoin de lsbBits - auto-détection
+
+      const res = await fetch("/api/watermark/lsb/extract", { method: "POST", body: formData })
+      const data = await res.json()
+
+      if (data.success) {
+        setExtractionResult({
+          originalImage: extractionImage, // Image originale en couleur
+          watermarkText: data.watermark || "Aucun watermark détecté"
+        })
+      } else {
+        alert(data.error || "Erreur lors de l'extraction")
+      }
+    } catch (e) { 
+      console.error(e); 
+      alert("Erreur lors de l'extraction") 
     }
+    finally { setIsProcessing(false) }
+  }
+
+
+  const handleCompare = async () => {
+    if (!originalImage) return alert("Image originale requise")
+    setIsProcessing(true)
+    try {
+      const formData1 = new FormData()
+      const formData2 = new FormData()
+
+      if (watermarkedImage1) {
+        const img1 = await imageToDataURL(await loadImage(originalImage))
+        const img2 = await imageToDataURL(await loadImage(watermarkedImage1))
+        formData1.append("image1", img1)
+        formData1.append("image2", img2)
+
+        const res1 = await fetch("/api/watermark/lsb/compare-files", { method: "POST", body: formData1 })
+        const data1 = await res1.json()
+        if (data1.success) setComparisonMetrics1(data1.metrics)
+      }
+
+      if (watermarkedImage2) {
+        const img1 = await imageToDataURL(await loadImage(originalImage))
+        const img2 = await imageToDataURL(await loadImage(watermarkedImage2))
+        formData2.append("image1", img1)
+        formData2.append("image2", img2)
+
+        const res2 = await fetch("/api/watermark/lsb/compare-files", { method: "POST", body: formData2 })
+        const data2 = await res2.json()
+        if (data2.success) setComparisonMetrics2(data2.metrics)
+      }
+
+    } catch (e) { 
+      console.error(e); 
+      alert("Erreur lors de la comparaison") 
+    }
+    finally { setIsProcessing(false) }
+  }
+
+  // Utilities
+  async function loadImage(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new Image(); img.onload = () => resolve(img); img.onerror = reject; img.src = src;
+    })
+  }
+  async function imageToDataURL(img: HTMLImageElement): Promise<string> {
+    const cvs = document.createElement("canvas"); cvs.width = img.width; cvs.height = img.height;
+    cvs.getContext("2d")?.drawImage(img, 0, 0); return cvs.toDataURL("image/png");
+  }
+  async function createFormDataFromImage(src: string): Promise<FormData> {
+    const img = await loadImage(src)
+    const dataUrl = await imageToDataURL(img)
+    const fd = new FormData(); fd.append("imageData", dataUrl); return fd;
   }
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>LSB (Least Significant Bit) Watermarking</CardTitle>
-          <CardDescription>
-            Modifiez les bits les moins significatifs pour insérer un watermark invisible
-          </CardDescription>
+    <div className="space-y-4 max-w-5xl mx-auto">
+      <Card className="shadow-md">
+        <CardHeader className="py-4 bg-muted/20">
+          <div className="flex items-center gap-2">
+            <Activity className="w-5 h-5 text-primary" />
+            <CardTitle className="text-lg">STÉGANOGRAPHIE LSB</CardTitle>
+          </div>
+          <CardDescription className="text-xs">Manipulation des bits de poids faible pour l'insertion invisible de données.</CardDescription>
         </CardHeader>
-        <CardContent>
-          <Tabs defaultValue="theory" className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="theory">Théorie</TabsTrigger>
-              <TabsTrigger value="practice">Pratique</TabsTrigger>
+        <CardContent className="p-0">
+          <Tabs defaultValue="insertion" className="w-full">
+            <TabsList className="w-full justify-start rounded-none border-b h-12 bg-transparent p-0">
+              <TabsTrigger value="insertion" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none h-12 px-6">Insertion</TabsTrigger>
+              <TabsTrigger value="extraction" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none h-12 px-6">Extraction</TabsTrigger>
+              <TabsTrigger value="comparison" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none h-12 px-6">Comparaison</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="theory" className="space-y-4 mt-4">
-              <div className="bg-muted p-4 rounded-lg space-y-3">
-                <h3 className="font-semibold text-primary">Comment fonctionne LSB?</h3>
-                <ul className="list-disc list-inside space-y-2 text-sm text-foreground">
-                  <li>Modifie les bits les moins significatifs des pixels</li>
-                  <li>Chaque pixel a une valeur RGB (0-255) codée en 8 bits</li>
-                  <li>Le bit LSB change la valeur du pixel de moins de 1%</li>
-                  <li>Invisible à l'oeil humain mais détectable par analyse</li>
-                  <li>Peu robuste aux compressions et transformations</li>
-                </ul>
-              </div>
-              <div className="bg-muted p-4 rounded-lg space-y-3">
-                <h3 className="font-semibold text-primary">Avantages</h3>
-                <p className="text-sm">Simple, rapide, grande capacité d'insertion</p>
-              </div>
-              <div className="bg-muted p-4 rounded-lg space-y-3">
-                <h3 className="font-semibold text-primary">Inconvénients</h3>
-                <p className="text-sm">Sensible à la compression, faible robustesse aux attaques</p>
+            {/* --- INSERTION --- */}
+            <TabsContent value="insertion" className="p-6 space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Left: Configuration */}
+                <div className="space-y-5">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Image Source</Label>
+                    <div className="flex items-center gap-4">
+                      <div className="relative w-24 h-24 bg-muted rounded-md overflow-hidden shrink-0 border border-dashed border-gray-400 flex items-center justify-center group cursor-pointer hover:bg-muted/80 transition"
+                        onClick={() => fileInputRef.current?.click()}>
+                        {image ? <img src={image} className="w-full h-full object-cover" /> : <Upload className="w-6 h-6 text-muted-foreground group-hover:scale-110 transition" />}
+                        <Input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, setImage)} />
+                      </div>
+                      <div className="text-sm text-balance text-muted-foreground">
+                        <p>Format PNG/JPG recommandé.</p>
+                        <p>Max 5MB.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Message à Cacher</Label>
+                    {watermarks.map((w, i) => (
+                      <div key={w.id} className="flex gap-2">
+                        <Input
+                          placeholder="Votre texte secret..."
+                          className="h-9 text-sm"
+                          value={w.text}
+                          onChange={(e) => setWatermarks(watermarks.map(x => x.id === w.id ? { ...x, text: e.target.value } : x))}
+                        />
+                        {watermarks.length > 1 && <Button variant="ghost" size="icon" className="h-9 w-9 text-red-500 hover:bg-red-500/10" onClick={() => setWatermarks(watermarks.filter(x => x.id !== w.id))}><X className="w-4 h-4" /></Button>}
+                      </div>
+                    ))}
+                    {watermarks.length < 5 && (
+                      <Button variant="link" className="p-0 h-auto text-xs" onClick={() => setWatermarks([...watermarks, { id: Date.now(), text: "" }])}>+ Ajouter une ligne</Button>
+                    )}
+                    {watermarks.length >= 5 && (
+                      <p className="text-xs text-muted-foreground">Maximum 5 watermarks atteint</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Qualité (Bits LSB)</Label>
+                      <span className="text-xs font-mono bg-primary/10 text-primary px-2 py-0.5 rounded">{lsbBits} bit{lsbBits > 1 ? 's' : ''}</span>
+                    </div>
+                    <input
+                      type="range" min="1" max="4" step="1"
+                      value={lsbBits}
+                      onChange={(e) => setLsbBits(Number(e.target.value))}
+                      className="w-full accent-primary h-2 bg-muted rounded-lg appearance-none cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[10px] text-muted-foreground">
+                      <span>Invisible (1)</span>
+                      <span>Robuste (4)</span>
+                    </div>
+                  </div>
+
+                  <Button onClick={handleAddWatermark} disabled={!image || isProcessing} className="w-full">
+                    {isProcessing ? "Traitement..." : "Appliquer le Watermark"}
+                  </Button>
+                </div>
+
+                {/* Right: Preview */}
+                <div className="bg-muted/30 rounded-xl p-4 border border-dashed min-h-[300px] flex flex-col justify-center items-center relative">
+                  {!watermarkedImage && <div className="text-center text-muted-foreground text-sm"><p>Le résultat s'affichera ici.</p></div>}
+
+                  {watermarkedImage && (
+                    <div className="w-full space-y-4 animate-in fade-in zoom-in">
+                      <div className="relative aspect-video w-full bg-black/5 rounded-lg overflow-hidden border">
+                        <img src={watermarkedImage} className="w-full h-full object-contain" />
+                      </div>
+
+                      {currentMetrics && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="bg-background rounded p-2 border shadow-sm">
+                            <div className="text-[10px] text-muted-foreground uppercase">Qualité Visuelle (PSNR)</div>
+                            <div className={`text-lg font-bold ${currentMetrics.psnr! > 40 ? 'text-green-500' : 'text-yellow-500'}`}>
+                              {currentMetrics.psnr?.toFixed(2)} dB
+                            </div>
+                          </div>
+                          <div className="bg-background rounded p-2 border shadow-sm">
+                            <div className="text-[10px] text-muted-foreground uppercase">Taux d'erreur (MSE)</div>
+                            <div className="text-lg font-bold text-gray-700 dark:text-gray-300">
+                              {currentMetrics.mse?.toFixed(5)}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        <Button variant="outline" className="flex-1" onClick={() => {
+                          const link = document.createElement("a"); link.href = watermarkedImage; link.download = "watermarked.png"; link.click();
+                        }}>Télécharger</Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </TabsContent>
 
-            <TabsContent value="practice" className="space-y-4 mt-4">
-              <LSBControls lsbBits={lsbBits} onLsbBitsChange={setLsbBits} />
+            {/* --- EXTRACTION --- */}
+            <TabsContent value="extraction" className="p-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-4">
+                  <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Image à Analyser</Label>
+                  <Input type="file" accept="image/*" onChange={(e) => handleImageUpload(e, setExtractionImage)} />
+                  {extractionImage && (
+                    <div className="h-48 bg-muted rounded-md overflow-hidden flex items-center justify-center border">
+                      <img src={extractionImage} className="max-h-full max-w-full object-contain" />
+                    </div>
+                  )}
+                  <Button onClick={handleExtract} disabled={!extractionImage || isProcessing} className="w-full" variant="secondary">
+                    {isProcessing ? "Analyse en cours..." : "Extraire le message"}
+                  </Button>
+                  <p className="text-xs text-muted-foreground text-center">
+                    Détection automatique des bits LSB (1-4 bits)
+                  </p>
+                </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Upload Image */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-lg">1. Image Source</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <Input type="file" accept="image/*" onChange={handleImageUpload} ref={fileInputRef} />
-                    {image && <ImagePreview src={image || "/placeholder.svg"} alt="Image source" />}
-                  </CardContent>
-                </Card>
+                <div className="space-y-4">
+                  <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Résultat de l'Extraction</Label>
+                  {extractionResult ? (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <p className="text-xs text-muted-foreground text-center">Image Originale</p>
+                        <div className="relative w-full aspect-square bg-muted rounded-lg overflow-hidden border">
+                          <img 
+                            src={extractionImage} 
+                            alt="Originale" 
+                            className="w-full h-full object-contain"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <p className="text-xs text-muted-foreground text-center">Watermark Extraite</p>
+                        <div className="relative w-full aspect-square bg-black rounded-lg overflow-hidden border border-gray-700 flex items-center justify-center">
+                          <div className="text-white text-center p-4 w-full h-full flex flex-col items-center justify-center overflow-y-auto">
+                            {extractionResult.watermarkText && extractionResult.watermarkText.trim() !== "" ? (
+                              (() => {
+                                // Séparer par " | " et filtrer les vides
+                                const watermarks = extractionResult.watermarkText.split(" | ").filter(t => t.trim() !== "")
+                                return watermarks.length > 0 ? (
+                                  watermarks.map((text, index) => {
+                                    const trimmedText = text.trim()
+                                    // Si le texte n'a qu'un seul mot, l'afficher en grand
+                                    // Sinon, premier mot en grand, reste en moyen
+                                    const words = trimmedText.split(/\s+/)
+                                    const firstWord = words[0] || ""
+                                    const restWords = words.slice(1).join(" ")
+                                    return (
+                                      <div key={index} className="mb-2 last:mb-0">
+                                        {words.length === 1 ? (
+                                          <div className="text-2xl md:text-3xl font-bold leading-tight">{trimmedText}</div>
+                                        ) : (
+                                          <>
+                                            {firstWord && (
+                                              <div className="text-2xl md:text-3xl font-bold mb-0.5 leading-tight">{firstWord}</div>
+                                            )}
+                                            {restWords && (
+                                              <div className="text-base md:text-lg font-semibold leading-tight opacity-90">{restWords}</div>
+                                            )}
+                                          </>
+                                        )}
+                                      </div>
+                                    )
+                                  })
+                                ) : (
+                                  <div className="text-gray-400 text-sm">Aucun watermark valide trouvé</div>
+                                )
+                              })()
+                            ) : (
+                              <div className="text-gray-400 text-lg">Aucun watermark trouvé</div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-muted/50 rounded-md min-h-[200px] flex items-center justify-center border border-dashed">
+                      <p className="text-sm text-muted-foreground">Le résultat s'affichera ici</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </TabsContent>
 
-                {/* Watermark Text */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-lg">2. Watermark</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <Input
-                      type="text"
-                      placeholder="Entrez le texte du watermark"
-                      value={watermark}
-                      onChange={(e) => setWatermark(e.target.value)}
-                      maxLength={50}
-                    />
-                    <Button
-                      onClick={handleAddWatermark}
-                      disabled={isProcessing || !image || !watermark}
-                      className="w-full"
-                    >
-                      {isProcessing ? "Traitement..." : "Ajouter Watermark"}
-                    </Button>
-                  </CardContent>
-                </Card>
+            {/* --- COMPARISON --- */}
+            <TabsContent value="comparison" className="p-6 space-y-4">
+              <div className="space-y-4">
+                <div className="text-center mb-4">
+                  <p className="text-sm text-muted-foreground">Comparez 1 image originale avec 2 images watermarkées (bits différents)</p>
+                </div>
 
-                {/* Result */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-lg">3. Résultat</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {watermarkedImage && (
-                      <>
-                        <ImagePreview src={watermarkedImage || "/placeholder.svg"} alt="Image watermarkée" />
-                        <Button onClick={handleExtractWatermark} variant="outline" className="w-full bg-transparent">
-                          Extraire Watermark
-                        </Button>
-                      </>
-                    )}
-                    {!watermarkedImage && (
-                      <p className="text-center text-muted-foreground text-sm py-8">
-                        L'image watermarkée apparaîtra ici
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Image Originale */}
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm text-center">Image Originale</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <Input 
+                        type="file" 
+                        accept="image/*" 
+                        onChange={(e) => handleImageUpload(e, setOriginalImage)} 
+                      />
+                      {originalImage && (
+                        <div className="relative w-full aspect-square bg-muted rounded-lg overflow-hidden">
+                          <img src={originalImage} alt="Originale" className="w-full h-full object-contain" />
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {/* Image Watermarkée 1 */}
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm text-center">Image Watermarkée 1</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <Input 
+                        type="file" 
+                        accept="image/*" 
+                        onChange={(e) => handleImageUpload(e, setWatermarkedImage1)} 
+                      />
+                      {watermarkedImage1 && (
+                        <>
+                          <div className="relative w-full aspect-square bg-muted rounded-lg overflow-hidden">
+                            <img src={watermarkedImage1} alt="Watermarkée 1" className="w-full h-full object-contain" />
+                          </div>
+                          {comparisonMetrics1 && (
+                            <div className="space-y-1 text-xs bg-muted p-2 rounded">
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">PSNR:</span>
+                                <span className={`font-semibold ${comparisonMetrics1.psnr > 40 ? 'text-green-600' : 'text-yellow-600'}`}>
+                                  {comparisonMetrics1.psnr === Infinity ? "∞" : comparisonMetrics1.psnr.toFixed(2)} dB
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">MSE:</span>
+                                <span className="font-semibold">{comparisonMetrics1.mse.toFixed(6)}</span>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {/* Image Watermarkée 2 */}
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm text-center">Image Watermarkée 2</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <Input 
+                        type="file" 
+                        accept="image/*" 
+                        onChange={(e) => handleImageUpload(e, setWatermarkedImage2)} 
+                      />
+                      {watermarkedImage2 && (
+                        <>
+                          <div className="relative w-full aspect-square bg-muted rounded-lg overflow-hidden">
+                            <img src={watermarkedImage2} alt="Watermarkée 2" className="w-full h-full object-contain" />
+                          </div>
+                          {comparisonMetrics2 && (
+                            <div className="space-y-1 text-xs bg-muted p-2 rounded">
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">PSNR:</span>
+                                <span className={`font-semibold ${comparisonMetrics2.psnr > 40 ? 'text-green-600' : 'text-yellow-600'}`}>
+                                  {comparisonMetrics2.psnr === Infinity ? "∞" : comparisonMetrics2.psnr.toFixed(2)} dB
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">MSE:</span>
+                                <span className="font-semibold">{comparisonMetrics2.mse.toFixed(6)}</span>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="flex justify-center">
+                  <Button 
+                    onClick={handleCompare} 
+                    disabled={!originalImage || (!watermarkedImage1 && !watermarkedImage2) || isProcessing}
+                    className="w-full md:w-auto"
+                  >
+                    {isProcessing ? "Calcul en cours..." : "Comparer les Images"}
+                  </Button>
+                </div>
+
+                {(comparisonMetrics1 || comparisonMetrics2) && (
+                  <Card className="bg-muted/50">
+                    <CardHeader>
+                      <CardTitle className="text-base">Résultats de Comparaison</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {comparisonMetrics1 && (
+                          <div className="space-y-2">
+                            <h4 className="font-semibold text-sm">Image Watermarkée 1</h4>
+                            <div className="space-y-1 text-sm">
+                              <div className="flex justify-between">
+                                <span>PSNR:</span>
+                                <span className={`font-bold ${comparisonMetrics1.psnr > 40 ? 'text-green-600' : comparisonMetrics1.psnr > 30 ? 'text-yellow-600' : 'text-red-600'}`}>
+                                  {comparisonMetrics1.psnr === Infinity ? "∞" : comparisonMetrics1.psnr.toFixed(2)} dB
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>MSE:</span>
+                                <span className="font-mono">{comparisonMetrics1.mse.toFixed(6)}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Pixels modifiés:</span>
+                                <span>{comparisonMetrics1.pixelsModified.toLocaleString()}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        {comparisonMetrics2 && (
+                          <div className="space-y-2">
+                            <h4 className="font-semibold text-sm">Image Watermarkée 2</h4>
+                            <div className="space-y-1 text-sm">
+                              <div className="flex justify-between">
+                                <span>PSNR:</span>
+                                <span className={`font-bold ${comparisonMetrics2.psnr > 40 ? 'text-green-600' : comparisonMetrics2.psnr > 30 ? 'text-yellow-600' : 'text-red-600'}`}>
+                                  {comparisonMetrics2.psnr === Infinity ? "∞" : comparisonMetrics2.psnr.toFixed(2)} dB
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>MSE:</span>
+                                <span className="font-mono">{comparisonMetrics2.mse.toFixed(6)}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Pixels modifiés:</span>
+                                <span>{comparisonMetrics2.pixelsModified.toLocaleString()}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             </TabsContent>
           </Tabs>
