@@ -23,6 +23,12 @@ export function dct2(block: number[][]): number[][] {
     return result
 }
 
+export interface ImageComparisonResult {
+    psnr: number;
+    mse: number;
+    pixelsModified: number;
+}
+
 export function idct2(block: number[][]): number[][] {
     const result = Array.from({ length: N }, () => Array(N).fill(0))
 
@@ -63,4 +69,56 @@ export function ycbcrToRgb(y: number, cb: number, cr: number) {
         g: Math.max(0, Math.min(255, g)),
         b: Math.max(0, Math.min(255, b)),
     }
+}
+
+/**
+ * Compare deux images pour l'évaluation de qualité (PSNR, MSE)
+ */
+export function compareImages(
+    image1: Uint8ClampedArray,
+    image2: Uint8ClampedArray
+): ImageComparisonResult {
+    if (image1.length !== image2.length) {
+        throw new Error("Les images doivent avoir la même taille pour être comparées.");
+    }
+
+    return calculateMetricsInternal(image1, image2);
+}
+
+/**
+ * Fonction interne de calcul de métriques (PSNR et MSE)
+ */
+export function calculateMetricsInternal(
+    original: Uint8ClampedArray,
+    modified: Uint8ClampedArray
+): ImageComparisonResult {
+    let sumSquaredDiff = 0;
+    let pixelsModified = 0;
+    let channelsCounted = 0;
+
+    for (let i = 0; i < original.length; i++) {
+        // Ignorer le canal alpha
+        if ((i + 1) % 4 === 0) continue;
+
+        channelsCounted++;
+        const diff = original[i] - modified[i];
+        sumSquaredDiff += diff * diff;
+
+        if (diff !== 0) pixelsModified++;
+    }
+
+    const mse = channelsCounted > 0 ? sumSquaredDiff / channelsCounted : 0;
+    const psnr = mse === 0 ? Infinity : 20 * Math.log10(255 / Math.sqrt(mse));
+
+    return {
+        psnr: Number.isFinite(psnr) ? psnr : 100,
+        mse,
+        pixelsModified
+    };
+}
+
+export async function imageToDataURL(img: any): Promise<string> {
+    // Implementation depends on environment (client vs server)
+    // For simply comparing buffers in backend, we might not need this here if we handle it in route
+    return "";
 }

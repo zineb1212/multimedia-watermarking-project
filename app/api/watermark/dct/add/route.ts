@@ -1,5 +1,5 @@
 import { createCanvas, loadImage } from "canvas"
-import { dct2, idct2, rgbToYcbcr, ycbcrToRgb } from "@/lib/dct"
+import { dct2, idct2, rgbToYcbcr, ycbcrToRgb, calculateMetricsInternal } from "@/lib/dct"
 
 export async function POST(request: Request) {
   const formData = await request.formData()
@@ -16,6 +16,8 @@ export async function POST(request: Request) {
 
   ctx.drawImage(img, 0, 0)
   const image = ctx.getImageData(0, 0, img.width, img.height)
+  const originalData = new Uint8ClampedArray(image.data) // Copy original data
+
 
   // convertir watermark en bits
   const bits = (watermark + "\u0000")
@@ -85,8 +87,24 @@ export async function POST(request: Request) {
 
   ctx.putImageData(image, 0, 0)
 
+  const metrics = calculateMetricsInternal(originalData, image.data)
+
   return Response.json({
     success: true,
     watermarkedImage: canvas.toDataURL("image/png"),
+    metrics
   })
+  // We need to keep a copy of original data.
+
+  // Correction in logic:
+  // 1. ctx.drawImage(img, 0, 0)
+  // 2. const original = ctx.getImageData(0, 0, ...).data; (ClampedArray)
+  // 3. const workingCopy = new Uint8ClampedArray(original);
+  // 4. Do processing on workingCopy.
+  // 5. Create new ImageData(workingCopy, ...) and put it.
+  // OR: Just re-draw img to a temp canvas to get original data? 
+  // The current code modifies `image.data` in place. `image` was obtained via `ctx.getImageData`.
+
+  // Let's grab original data BEFORE processing.
+
 }
